@@ -1,11 +1,48 @@
 [
   {
-    "name": "example",
-    "title": "TODO(author): the first document this industry must produce",
-    "for_each": "select gen_random_uuid() as id, 'Example' as name",
+    "name": "decision-pack",
+    "title": "Duplicate decision pack",
+    "for_each": "select id,code from duplicate_groups order by code",
+    "file": "code",
+    "sections": [
+      {
+        "title": "Review assignment",
+        "sql": "select code,name,owner,due_on,status from duplicate_groups where id=$1",
+        "layout": "record"
+      },
+      {
+        "title": "Source fields",
+        "sql": "select m.external_id,r.name,r.fields,r.version,r.protected from members m left join records r on m.external_id=r.external_id where m.group_id=$1 order by m.external_id"
+      },
+      {
+        "title": "Decision history",
+        "sql": "select master_id,values,provenance,versions,reason,actor,state,created_at from proposals where group_id=$1 order by created_at"
+      },
+      {
+        "title": "Reviewer notes",
+        "sql": "select body,actor,created_at from notes where group_id=$1 order by created_at"
+      }
+    ]
+  },
+  {
+    "name": "accuracy-review",
+    "title": "Record accuracy and retention review",
+    "for_each": "select id,name from workspace",
     "file": "name",
     "sections": [
-      { "title": "Details", "sql": "select 'replace me' as item, $1::text as record_id" }
+      {
+        "title": "Business",
+        "sql": "select name from workspace where id=$1",
+        "layout": "record"
+      },
+      {
+        "title": "Review findings",
+        "sql": "select c.* from v_compliance c where exists(select 1 from workspace where id=$1) order by rule,record"
+      },
+      {
+        "title": "Evidence of changes",
+        "sql": "select action,actor,detail,created_at from history where exists(select 1 from workspace where id=$1) order by created_at"
+      }
     ]
   }
 ]

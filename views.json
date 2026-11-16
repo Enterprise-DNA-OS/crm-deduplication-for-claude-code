@@ -1,13 +1,43 @@
 [
   {
     "name": "week",
-    "title": "This week",
-    "subtitle": "CRM Deduplication for Claude Code: what needs attention, rendered by npm run view",
+    "title": "Duplicate review week",
     "sections": [
       {
-        "title": "Needs attention",
-        "note": "TODO(author): point this at the industry's attention view (overdue, stuck, quiet).",
-        "sql": "select 'replace me' as item, 'TODO(author)' as why"
+        "title": "Review queue",
+        "sql": "select code,name,owner,due_on,attention,missing_records from v_group_review order by code"
+      },
+      {
+        "title": "Owner workload",
+        "sql": "select * from v_owner_workload order by owner"
+      }
+    ]
+  },
+  {
+    "name": "conflicts",
+    "title": "Field conflicts and missing evidence",
+    "sections": [
+      {
+        "title": "Disagreements",
+        "sql": "select * from v_conflicts order by code,field"
+      },
+      {
+        "title": "Source coverage",
+        "sql": "select code,external_id,record_name,finding from v_coverage order by code,external_id"
+      }
+    ]
+  },
+  {
+    "name": "compliance",
+    "title": "Accuracy and retention review",
+    "sections": [
+      {
+        "title": "Recorded checks",
+        "sql": "select * from v_compliance order by rule,record"
+      },
+      {
+        "title": "Local consolidations",
+        "sql": "select code,master_id,values,stale from v_canonical order by code"
       }
     ]
   }

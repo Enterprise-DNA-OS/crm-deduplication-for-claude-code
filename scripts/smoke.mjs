@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {getDb,REPO_ROOT} from './lib/db.mjs';
+import {migrate} from './migrate.mjs';
+import {seed} from './seed.mjs';
+import {run,operations} from './dedupe.mjs';
+import {parseCsv} from './lib/csv.mjs';
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dedupe-test-'));
+process.env.DATABASE_URL=process.env.TEST_DATABASE_URL||'';
+process.env.DATA_DIR=path.join(dir,'db');process.env.OUTPUT_DIR=dir;
+let db,n=0;const seen=new Set();
+const eq=(a,b)=>{assert.deepEqual(a,b);n++;};const ok=a=>{assert.ok(a);n++;};
+const invoke=(...args)=>{seen.add(args[0]);return run(db,args);};
+const reject=async(a,re)=>{await assert.rejects(()=>invoke(...a),re);n++;};
+const by='--by=Smoke reviewer';
+const fixture=path.join(REPO_ROOT,'examples/cloudingo-contact-groups.csv');
+const records=path.join(REPO_ROOT,'examples/contacts.csv');
+const imp=['import','cloudingo',fixture,'--object=Contact','--scope=Contacts by email',`--records=${records}`,by];
+try {
+ db=await getDb();eq((await migrate(db)).ran.length,1);eq((await migrate(db)).ran.length,0);
+ ok((await invoke('help')).commands.includes('propose'));
+ await reject(['scan',by],/init/);await invoke('init','--name=Test business',by);await reject(['init','--name=Duplicate',by],/already/);
+ await assert.rejects(()=>seed(db),/business workspace/);n++;
+ eq((await invoke(...imp,'--dry-run')).groups,1);eq((await invoke('groups')).length,0);eq((await invoke('records')).length,0);
+ eq((await invoke(...imp)).added,2);eq((await invoke(...imp)).duplicate,true);
+ const groups=await invoke('groups'),g=groups[0].code;eq(groups[0].members,2);
+ const d=await invoke('show-group',g.toLowerCase());eq(d.members.length,2);
+ await reject(['propose',g,'--master=003EXAMPLE000001','--reason=Reviewed',by],/Assign/);
+ await invoke('assign',g,'--owner=Aroha','--due=2020-01-01',by);
+ await reject(['assign',g,'--owner=Aroha','--due=2026-02-30',by],/Date/);
+ await reject(['propose',g,'--master=outside','--reason=Checked',by],/Master/);
+ const p=await invoke('propose',g,'--master=003EXAMPLE000001',`--fields=${path.join(REPO_ROOT,'examples/field-choices.json')}`,'--reason=Same person confirmed with owner',by);
+ eq(p.values.HasOptedOutOfEmail,true);eq(p.values.Phone,'021000012');eq(p.provenance.Phone,'003EXAMPLE000002');
+ await invoke('protect','003EXAMPLE000002','--value=true','--reason=Open correction request',by);
+ await reject(['apply',g,by],/Source changed/);await reject(['propose',g,'--master=003EXAMPLE000001','--reason=Try',by],/Protected/);
+ await invoke('protect','003EXAMPLE000002','--value=false','--reason=Request reviewed',by);
+ await invoke('propose',g,'--master=003EXAMPLE000001','--reason=Reviewed again',by);await invoke('apply',g,by);
+ eq((await invoke('canonical')).length,1);eq((await invoke('canonical'))[0].stale,false);
+ await reject(['assign',g,'--owner=Aroha','--due=2020-01-01',by],/Closed/);
+ await reject(['reopen',g,'--reason=Wrong action',by],/undo/);
+ const original=(await db.query("select fields->>'Phone' as phone from records where external_id='003EXAMPLE000001'"))[0];eq(original.phone,'021000011');
+ const changed=path.join(dir,'changed.csv');fs.writeFileSync(changed,fs.readFileSync(records,'utf8').replace('021000011','021999999'));
+ eq((await invoke('import','cloudingo',fixture,'--object=Contact','--scope=Contacts by email',`--records=${changed}`,by)).updated,1);eq((await invoke('canonical'))[0].stale,true);ok((await invoke('compliance')).some(x=>x.rule==='STALE'));
+ await invoke('undo',g,'--reason=New export needs review',by);eq((await invoke('canonical')).length,0);
+ await invoke('propose',g,'--master=003EXAMPLE000002','--reason=Rechecked fields',by);await invoke('apply',g,by);
+ eq((await invoke('scan',by)).groups,1);eq((await invoke('scan',by)).groups,0);
+ const scan=(await invoke('groups')).find(x=>x.code.startsWith('SCAN-')).code;
+ await invoke('assign',scan,'--owner=James','--due=2020-01-01',by);await invoke('propose',scan,'--master=003EXAMPLE000001','--reason=Review overlap',by);await reject(['apply',scan,by],/Already consolidated/);
+ await invoke('keep-separate',scan,'--reason=Already reviewed in other group',by);await invoke('reopen',scan,'--reason=Recheck',by);
+ await invoke('log-note',g,'--text=<script>private</script>',by);
+ await invoke('add-record','--id=LOCAL-3','--object=Contact','--name=Taylor Additional','--email=other@example.test','--last-name=Jones',by);
+ await reject(['protect','Taylor','--value=true','--reason=Ambiguous',by],/Ambiguous[\s\S]*003EXAMPLE000001[\s\S]*LOCAL-3/);
+ await reject(['add-record','--id=LOCAL-3','--object=Contact','--name=Again',by],/already exists/);
+ await invoke('verify-record','LOCAL-3','--verified=2020-01-01','--review=2020-02-01',by);
+ await reject(['verify-record','LOCAL-3','--verified=2999-01-01','--review=2999-02-01',by],/future/);
+ const bad=path.join(dir,'bad.csv');fs.writeFileSync(bad,'Group Name,Total Matches,Contact IDs\nMissing people,2,"003MISSING000001,003MISSING000002"\n');
+ await invoke('import','cloudingo',bad,'--object=Contact','--scope=missing',by);
+ const missing=(await invoke('groups')).find(x=>x.name==='Missing people').code;
+ await invoke('assign',missing,'--owner=James','--due=2020-01-01',by);await reject(['propose',missing,'--master=003MISSING000001','--reason=No fields',by],/Missing source/);
+ const prior=(await invoke('records')).length;
+ fs.writeFileSync(bad,'Group Name,Total Matches,Contact IDs\nBad count,3,"A,B"\n');await reject(['import','cloudingo',bad,'--object=Contact','--scope=bad',by],/must agree/);eq((await invoke('records')).length,prior);
+ // A conflicting group after a changed source record must roll the entire import back.
+ fs.writeFileSync(bad,'Group Name,Total Matches,Contact IDs\nTaylor export match,2,"003EXAMPLE000001,NEW"\n');
+ const before=(await db.query("select version from records where external_id='003EXAMPLE000001'"))[0].version;
+ await reject(['import','cloudingo',bad,'--object=Contact','--scope=Contacts by email',`--records=${records}`,by],/changed membership/);
+ eq((await db.query("select version from records where external_id='003EXAMPLE000001'"))[0].version,before);
+ const mapped=path.join(dir,'mapped.csv');fs.writeFileSync(mapped,'Cluster,Count,IDs\nMap group,2,"A,B"\n');const mapping=path.join(dir,'map.json');fs.writeFileSync(mapping,JSON.stringify({group:'Cluster',count:'Count',ids:'IDs'}));eq((await invoke('import','cloudingo',mapped,'--object=Account','--scope=Accounts',`--map=${mapping}`,by)).groups,1);
+ for(const c of ['records','groups','attention','coverage','conflicts','owners','history','compliance','canonical'])ok(Array.isArray(await invoke(c)));
+ eq((await invoke('insights')).length,10);eq((await invoke('insights','--question=10'))[0].rows.length,1);await reject(['insights','--question=11'],/1 to 10/);
+ await reject(['groups','--bogus'],/Unknown option/);await reject(['groups','extra'],/expects/);await reject(['nonexistent'],/Unknown command/);await reject(['scan'],/by/);
+ const draft=await invoke('draft-review',g);const html=fs.readFileSync(draft.file,'utf8');ok(html.includes('&lt;script&gt;'));ok(!html.includes('<script>private'));
+ const archive=await invoke('export');const data=JSON.parse(fs.readFileSync(archive.file));eq(data.format,'crm-deduplication-v1');ok(data.record_versions.length>data.records.length);ok(data.history.some(x=>x.action==='undo'));
+ for(const t of ['members','record_versions','notes','import_batches','history']){await assert.rejects(()=>db.exec(`delete from ${t}`),/Append-only/);n++;}
+ await db.close();db=null;
+ const launch=(file,a=[])=>spawnSync(process.execPath,[path.join(REPO_ROOT,'scripts',file),...a],{env:process.env,encoding:'utf8'});
+ for(const f of ['view.mjs','docs.mjs']){const p=launch(f);eq(p.status,0);}
+ eq(fs.readdirSync(path.join(dir,'views')).length,3);ok(fs.readdirSync(path.join(dir,'docs-out/decision-pack')).length>=3);
+ eq(launch('dedupe.mjs',['records','--json']).status,0);eq(launch('dedupe.mjs',['protect','Taylor','--value=true','--reason=test',by]).status,1);
+ // Seed is idempotent in a distinct empty local database.
+ process.env.DATABASE_URL='';process.env.DATA_DIR=path.join(dir,'seed-db');db=await getDb();await migrate(db);await seed(db);await seed(db);eq((await run(db,['records'])).length,5);eq((await run(db,['groups'])).length,3);await db.close();db=null;
+ eq(parseCsv('\ufeffa,b\r\n"x\ny","a""b"\r\n'),[{a:'x\ny',b:'a"b'}]);for(const bad of ['a,a\n1,2','a,b\n1','a,b\n"unclosed,2']){assert.throws(()=>parseCsv(bad));n++;}
+ eq(operations.filter(c=>!seen.has(c)),[]);
+ console.log(`PASS: ${n} assertions across ${seen.size} CLI operations (${process.env.TEST_DATABASE_URL?'Postgres and PGlite':'PGlite'})`);
+} finally {await db?.close();fs.rmSync(dir,{recursive:true,force:true});}
