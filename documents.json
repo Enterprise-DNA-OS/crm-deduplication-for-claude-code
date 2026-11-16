@@ -12,11 +12,19 @@
       },
       {
         "title": "Source fields",
-        "sql": "select m.external_id,r.name,r.fields,r.version,r.protected from members m left join records r on m.external_id=r.external_id where m.group_id=$1 order by m.external_id"
+        "sql": "select m.external_id,r.name,r.owner,r.version,r.protected from members m left join records r on m.external_id=r.external_id where m.group_id=$1 order by m.external_id"
+      },
+      {
+        "title": "Field comparison",
+        "sql": "select k.key as field,m.external_id as source_id,k.value from members m join records r on m.external_id=r.external_id cross join lateral jsonb_each_text(r.fields) k where m.group_id=$1 order by k.key,m.external_id"
       },
       {
         "title": "Decision history",
-        "sql": "select master_id,values,provenance,versions,reason,actor,state,created_at from proposals where group_id=$1 order by created_at"
+        "sql": "select master_id,reason,actor,state,created_at from proposals where group_id=$1 order by created_at"
+      },
+      {
+        "title": "Selected field values",
+        "sql": "select p.state,k.key as field,k.value,p.provenance->>k.key as source from proposals p cross join lateral jsonb_each_text(p.values) k where p.group_id=$1 order by p.created_at,k.key"
       },
       {
         "title": "Reviewer notes",
