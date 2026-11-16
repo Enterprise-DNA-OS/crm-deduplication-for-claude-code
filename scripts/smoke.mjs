@@ -60,6 +60,7 @@ try {
  await invoke('import','cloudingo',bad,'--object=Contact','--scope=missing',by);
  const missing=(await invoke('groups')).find(x=>x.name==='Missing people').code;
  await invoke('assign',missing,'--owner=James','--due=2020-01-01',by);await reject(['propose',missing,'--master=003MISSING000001','--reason=No fields',by],/Missing source/);
+ const onlyIds=path.join(dir,'ids-only.csv');fs.writeFileSync(onlyIds,'Id\n003MISSING000001\n');await reject(['import','cloudingo',bad,'--object=Contact','--scope=missing',`--records=${onlyIds}`,by],/source name fields/);
  const prior=(await invoke('records')).length;
  fs.writeFileSync(bad,'Group Name,Total Matches,Contact IDs\nBad count,3,"A,B"\n');await reject(['import','cloudingo',bad,'--object=Contact','--scope=bad',by],/must agree/);eq((await invoke('records')).length,prior);
  // A conflicting group after a changed source record must roll the entire import back.

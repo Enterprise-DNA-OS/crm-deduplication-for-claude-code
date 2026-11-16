@@ -8,9 +8,9 @@ Export one object type and filter at a time. Supported objects are Contact, Lead
 
 ## Obtain field values
 
-Supply a corresponding source CSV with Id and the fields you need. The standard adapter recognises FirstName, LastName, Email, Phone, Company, MailingCity, HasOptedOutOfEmail and Owner, Owner.Name or OwnerId. Name is used when present. Email preferences must be true, false or blank. Blank means unknown. This is the source record snapshot you obtained from Salesforce or a configured Cloudingo Find Data export; a basic pre-merge export alone cannot reconstruct it.
+Supply a corresponding source CSV with Id and the fields you need. The standard adapter recognises FirstName, LastName, Email, Phone, Company, MailingCity, HasOptedOutOfEmail and Owner, Owner.Name or OwnerId. Name is used when present. At least one source name field is required; a file containing only Id is rejected. Email preferences must be true, false or blank. Blank means unknown. This is the source record snapshot you obtained from Salesforce or a configured Cloudingo Find Data export; a basic pre-merge export alone cannot reconstruct it.
 
-Cloudingo describes retrieving field data using Find Data after separating exported IDs. [Find Data](https://help.cloudingo.com/docs/tools-find-data). Check the actual output headers. Unknown custom fields are not mapped into the working record. Keep them in your original export, and add their mapping and tests before your cutover. Activity, attachments, relationships, automation rules, historical merges and credentials do not arrive in the basic group export.
+Cloudingo describes retrieving field data using Find Data after separating exported IDs. [Find Data](https://help.cloudingo.com/docs/tools-find-data-find-data). Check the actual output headers. Unknown custom fields are not mapped into the working record. Keep them in your original export, and add their mapping and tests before your cutover. Activity, attachments, relationships, automation rules, historical merges and credentials do not arrive in the basic group export.
 
 The examples are fictional fixtures based on the documented column structure, not downloaded customer exports.
 
